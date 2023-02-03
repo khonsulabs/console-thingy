@@ -92,6 +92,16 @@ impl Window for Gui {
                     self.zoom = 1.0;
                     status.set_needs_redraw();
                 }
+                VirtualKeyCode::Tab | VirtualKeyCode::Right => {
+                    let mut input = self.console.state.input.lock();
+                    if !input.suggestion.is_empty() {
+                        let input = &mut *input;
+                        input.buffer.push_str(&input.suggestion);
+                        input.suggestion.clear();
+                        status.set_needs_redraw();
+                        self.console.send(ConsoleEvent::InputBufferChanged);
+                    }
+                }
                 _ => {}
             },
             Event::MouseWheel { delta, .. } => {
@@ -136,12 +146,19 @@ impl Window for Gui {
             match ch {
                 '\u{8}' => {
                     input.buffer.pop();
+                    input.suggestion.clear();
+                    self.console.send(ConsoleEvent::InputBufferChanged);
                 }
                 '\r' | '\n' => {
                     self.console.send(ConsoleEvent::Input);
                 }
+                '\t' => {}
                 _ => {
                     input.buffer.push(ch);
+                    if input.suggestion.starts_with(ch) {
+                        input.suggestion.remove(0);
+                    }
+                    self.console.send(ConsoleEvent::InputBufferChanged);
                 }
             }
             status.set_needs_redraw();
@@ -172,7 +189,8 @@ impl Window for Gui {
         let line_height = ascent - descent;
         let rows = (scene.size().height() / line_height).get() as usize;
 
-        let input_lines = input.buffer.lines(cols);
+        input.buffer.rewrap(cols);
+        let input_lines = input.buffer.lines();
         let input_lines_count = input_lines.len();
 
         let input_top = scene.size().height() + descent - line_height * input_lines_count as f32;
@@ -184,7 +202,7 @@ impl Window for Gui {
         .render(scene);
 
         let mut baseline = input_top + ascent;
-        for line in input_lines {
+        for (line_number, line) in input_lines.enumerate() {
             let prepared = Text::prepare(
                 line,
                 &self.console.state.config.font,
@@ -193,6 +211,20 @@ impl Window for Gui {
                 scene,
             );
             prepared.render_baseline_at(scene, Point::from_figures(Figure::new(0.), baseline))?;
+
+            if line_number == input_lines_count - 1 && !input.suggestion.is_empty() {
+                let suggestion = Text::prepare(
+                    &input.suggestion,
+                    &self.console.state.config.font,
+                    Figure::new(14.0),
+                    Color::GRAY,
+                    scene,
+                );
+                suggestion.render_baseline_at(
+                    scene,
+                    Point::from_figures(prepared.width.to_scaled(scene.scale()), baseline),
+                )?;
+            }
             baseline += line_height;
         }
 
@@ -200,7 +232,8 @@ impl Window for Gui {
         let mut total_lines = 0;
         let scroll = scrollback.scroll;
         for line in &mut scrollback.events {
-            let lines = line.lines(cols);
+            line.rewrap(cols);
+            let lines = line.lines();
 
             for line in lines.rev() {
                 total_lines += 1;
@@ -265,10 +298,16 @@ fn command_handler(
                 let mut wrapped = Wrapped::from(line);
                 if scrollback.scroll != 0 {
                     // When the view port is scrolled, keep it at the same position
-                    let line_count = wrapped.lines(scrollback.columns).len();
+                    wrapped.rewrap(scrollback.columns);
+                    let line_count = wrapped.lines().len();
                     scrollback.scroll += line_count;
                 }
                 scrollback.events.push_front(wrapped);
+                redrawer.request_redraw();
+            }
+            ConsoleCommand::SetSuggestion(suggestion) => {
+                let mut input = state.input.lock();
+                input.suggestion = suggestion;
                 redrawer.request_redraw();
             }
             ConsoleCommand::ResetInput => {
@@ -279,6 +318,12 @@ fn command_handler(
             ConsoleCommand::ResetScroll => {
                 let mut scrollback = scrollback.lock();
                 scrollback.scroll = 0;
+                redrawer.request_redraw();
+            }
+            ConsoleCommand::ResetScrollback => {
+                let mut scrollback = scrollback.lock();
+                scrollback.scroll = 0;
+                scrollback.events.clear();
                 redrawer.request_redraw();
             }
             ConsoleCommand::Shutdown => {

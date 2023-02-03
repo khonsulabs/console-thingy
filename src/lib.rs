@@ -1,4 +1,5 @@
 use parking_lot::Mutex;
+use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
@@ -126,6 +127,12 @@ impl Console {
             .expect("console shut down");
     }
 
+    pub fn set_suggestion(&self, suggestion: impl Into<String>) {
+        self.console
+            .send(ConsoleCommand::SetSuggestion(suggestion.into()))
+            .expect("console shut down");
+    }
+
     pub fn input(&self) -> Input {
         let input = self.state.input.lock();
         input.clone()
@@ -134,6 +141,12 @@ impl Console {
     pub fn clear_input(&self) {
         self.console
             .send(ConsoleCommand::ResetInput)
+            .expect("console shut down");
+    }
+
+    pub fn clear_scrollback(&self) {
+        self.console
+            .send(ConsoleCommand::ResetScrollback)
             .expect("console shut down");
     }
 
@@ -197,13 +210,16 @@ impl ConsoleHandle {
 }
 
 pub enum ConsoleEvent {
+    InputBufferChanged,
     Input,
 }
 
 enum ConsoleCommand {
     Push(String),
+    SetSuggestion(String),
     ResetInput,
     ResetScroll,
+    ResetScrollback,
     Shutdown,
 }
 
@@ -236,6 +252,21 @@ impl State {
 #[derive(Default, Clone)]
 pub struct Input {
     buffer: Wrapped,
+    suggestion: String,
+}
+
+impl Deref for Input {
+    type Target = String;
+
+    fn deref(&self) -> &Self::Target {
+        &self.buffer
+    }
+}
+
+impl DerefMut for Input {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.buffer
+    }
 }
 
 impl From<Input> for String {

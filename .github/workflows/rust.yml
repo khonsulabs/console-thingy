@@ -1,0 +1,27 @@
+name: Tests
+
+on: [push]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install x11 dependencies for Kludgine
+        run: |
+          sudo apt-get update -y -qq
+          sudo add-apt-repository ppa:oibaf/graphics-drivers -y
+          sudo apt-get update
+          sudo apt-get install -y \
+            libegl1-mesa libgl1-mesa-dri libxcb-xfixes0-dev mesa-vulkan-drivers
+
+      - name: Run clippy
+        run: |
+          cargo clippy
+      - name: Run default features unit tests
+        run: |
+          cargo test
+      - name: Run tokio unit tests
+        run: |
+          cargo test

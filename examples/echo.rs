@@ -5,12 +5,10 @@ fn main() {
         console.push_line("This demo echoes each line of input.");
 
         while let Ok(event) = console.next_event() {
-            match event {
-                console_thingy::ConsoleEvent::Input => {
-                    console.push_line(console.input());
-                    console.clear_input();
-                    console.reset_scroll();
-                }
+            if let console_thingy::ConsoleEvent::Input = event {
+                console.push_line(console.input());
+                console.clear_input();
+                console.reset_scroll();
             }
         }
 

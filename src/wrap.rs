@@ -9,10 +9,14 @@ pub struct Wrapped {
 }
 
 impl Wrapped {
-    pub fn lines(&mut self, width: usize) -> Lines<'_> {
+    pub fn rewrap(&mut self, width: usize) {
         if self.dirty || self.wrapped_width != width {
             self.wrap(width);
         }
+    }
+
+    pub fn lines(&self) -> Lines<'_> {
+        debug_assert!(!self.dirty);
 
         Lines {
             source: &self.string,
@@ -144,10 +148,13 @@ impl<'a> DoubleEndedIterator for Lines<'a> {
 #[test]
 fn wrap_tests() {
     let mut wrapped = Wrapped::from("hello world");
-    assert_eq!(wrapped.lines(10).collect::<Vec<_>>(), ["hello ", "world"]);
-    assert_eq!(wrapped.lines(11).collect::<Vec<_>>(), ["hello world"]);
+    wrapped.rewrap(10);
+    assert_eq!(wrapped.lines().collect::<Vec<_>>(), ["hello ", "world"]);
+    wrapped.rewrap(11);
+    assert_eq!(wrapped.lines().collect::<Vec<_>>(), ["hello world"]);
+    wrapped.rewrap(10);
     assert_eq!(
-        wrapped.lines(10).rev().collect::<Vec<_>>(),
+        wrapped.lines().rev().collect::<Vec<_>>(),
         ["world", "hello "]
     );
 }

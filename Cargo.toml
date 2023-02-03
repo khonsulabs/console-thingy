@@ -32,4 +32,4 @@ crossterm = { version = "0.26.0", optional = true }
 lipsum = "0.8.2"
 
 [patch.crates-io]
-kludgine = { path = "../kludgine/kludgine" }
+kludgine = { git = "https://github.com/khonsulabs/kludgine", branch = "main" }

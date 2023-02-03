@@ -13,28 +13,26 @@ fn main() {
         });
 
         while let Ok(event) = console.next_event() {
-            match event {
-                console_thingy::ConsoleEvent::Input => {
-                    let input = String::from(console.input());
-                    match &*input {
-                        "exit" | "quit" => {
-                            break;
-                        }
-                        // TODO these don't shut down the app correctly, but it
-                        // seems to be because Kludgine doesn't notice the
-                        // threads are shut down:
-                        // https://github.com/khonsulabs/kludgine/issues/59
-                        "error" => {
-                            anyhow::bail!("an error occurred");
-                        }
-                        "panic" => {
-                            panic!("this is a panic");
-                        }
-                        _ => {
-                            console.push_line(input);
-                            console.clear_input();
-                            console.reset_scroll();
-                        }
+            if let console_thingy::ConsoleEvent::Input = event {
+                let input = String::from(console.input());
+                match &*input {
+                    "exit" | "quit" => {
+                        break;
+                    }
+                    // TODO these don't shut down the app correctly, but it
+                    // seems to be because Kludgine doesn't notice the
+                    // threads are shut down:
+                    // https://github.com/khonsulabs/kludgine/issues/59
+                    "error" => {
+                        anyhow::bail!("an error occurred");
+                    }
+                    "panic" => {
+                        panic!("this is a panic");
+                    }
+                    _ => {
+                        console.push_line(input);
+                        console.clear_input();
+                        console.reset_scroll();
                     }
                 }
             }
