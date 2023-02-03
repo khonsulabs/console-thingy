@@ -49,6 +49,6 @@ fn main() {
 
 This is the above example running as a GUI application:
 
-<video src="https://raw.githubusercontent.com/khonsulabs/console-thingy/gh-pages/echo-screencast.mp4"></video>
+![echo example](https://raw.githubusercontent.com/khonsulabs/console-thingy/gh-pages/echo-screencast.gif)
 
 [kludgine]: https://github.com/khonsulabs/kludgine
