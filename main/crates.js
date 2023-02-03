@@ -1,0 +1,1 @@
+window.ALL_CRATES = ["console_thingy"];

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":[["ConsoleEvent",""]],"struct":[["Config",""],["Console",""],["Input",""]],"trait":[["App",""]]};

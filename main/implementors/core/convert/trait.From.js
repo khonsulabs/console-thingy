@@ -1,0 +1,3 @@
+(function() {var implementors = {
+"console_thingy":[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.67.0/core/convert/trait.From.html\" title=\"trait core::convert::From\">From</a>&lt;<a class=\"struct\" href=\"console_thingy/struct.Input.html\" title=\"struct console_thingy::Input\">Input</a>&gt; for <a class=\"struct\" href=\"https://doc.rust-lang.org/1.67.0/alloc/string/struct.String.html\" title=\"struct alloc::string::String\">String</a>"]]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
