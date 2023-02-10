@@ -6,5 +6,6 @@ use crate::wrap::Wrapped;
 pub struct Scrollback {
     pub events: VecDeque<Wrapped>,
     pub scroll: usize,
+    pub maximum_scroll: usize,
     pub columns: usize,
 }

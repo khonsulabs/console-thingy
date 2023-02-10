@@ -1,12 +1,7 @@
-use std::sync::Arc;
-
 use kludgine::core::figures::Points;
 use kludgine::prelude::*;
-use parking_lot::Mutex;
 
-use crate::scrollback::Scrollback;
-use crate::wrap::Wrapped;
-use crate::{ConsoleCommand, ConsoleEvent, ConsoleHandle, State};
+use crate::ConsoleHandle;
 
 #[cfg(feature = "bundled-font")]
 pub fn bundled_font() -> &'static Font {
@@ -17,21 +12,16 @@ pub fn bundled_font() -> &'static Font {
 }
 
 pub(crate) fn run(console: ConsoleHandle) -> ! {
-    let scrollback = Arc::new(Mutex::new(Scrollback::default()));
     SingleWindowApplication::run(Gui {
         zoom: 1.0,
-        scrollback,
         console,
         line_height: Figure::new(0.),
-        maximum_scroll: 0,
     })
 }
 
 pub struct Gui {
     zoom: f32,
-    scrollback: Arc<Mutex<Scrollback>>,
     console: ConsoleHandle,
-    maximum_scroll: usize,
     line_height: Figure<f32, Scaled>,
 }
 
@@ -51,10 +41,10 @@ impl Window for Gui {
     where
         Self: Sized,
     {
-        let commands = self.console.commands.clone();
-        let scrollback = self.scrollback.clone();
-        let state = self.console.state.clone();
-        std::thread::spawn(move || command_handler(redrawer, commands, state, scrollback));
+        self.console
+            .state
+            .set_redrawer(move || redrawer.request_redraw());
+
         Ok(())
     }
 
@@ -93,19 +83,11 @@ impl Window for Gui {
                     status.set_needs_redraw();
                 }
                 VirtualKeyCode::Tab | VirtualKeyCode::Right => {
-                    let mut input = self.console.state.input.lock();
-                    if !input.suggestion.is_empty() {
-                        let input = &mut *input;
-                        input.buffer.push_str(&input.suggestion);
-                        input.suggestion.clear();
-                        status.set_needs_redraw();
-                        self.console.send(ConsoleEvent::InputBufferChanged);
-                    }
+                    self.console.complete_suggestion();
                 }
                 _ => {}
             },
             Event::MouseWheel { delta, .. } => {
-                let mut scrollback = self.scrollback.lock();
                 let lines = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
                     MouseScrollDelta::PixelDelta(pixels) => {
@@ -113,15 +95,7 @@ impl Window for Gui {
                         pixels.y as f32 / line_height.get()
                     }
                 };
-                if lines > 0. {
-                    scrollback.scroll = scrollback
-                        .scroll
-                        .saturating_add(lines as usize)
-                        .min(self.maximum_scroll);
-                } else {
-                    scrollback.scroll = scrollback.scroll.saturating_sub((-lines) as usize);
-                }
-                status.set_needs_redraw();
+                self.console.scroll(lines as isize);
             }
             _ => {}
         }
@@ -132,7 +106,7 @@ impl Window for Gui {
     fn receive_character(
         &mut self,
         ch: char,
-        status: &mut RedrawStatus,
+        _status: &mut RedrawStatus,
         scene: &Target,
         _window: WindowHandle,
     ) -> kludgine::app::Result<()>
@@ -142,26 +116,7 @@ impl Window for Gui {
         if scene.modifiers_pressed().primary_modifier() {
             // This is a shortcut of some sort.
         } else {
-            let mut input = self.console.state.input.lock();
-            match ch {
-                '\u{8}' => {
-                    input.buffer.pop();
-                    input.suggestion.clear();
-                    self.console.send(ConsoleEvent::InputBufferChanged);
-                }
-                '\r' | '\n' => {
-                    self.console.send(ConsoleEvent::Input);
-                }
-                '\t' => {}
-                _ => {
-                    input.buffer.push(ch);
-                    if input.suggestion.starts_with(ch) {
-                        input.suggestion.remove(0);
-                    }
-                    self.console.send(ConsoleEvent::InputBufferChanged);
-                }
-            }
-            status.set_needs_redraw();
+            self.console.input(ch);
         }
         Ok(())
     }
@@ -173,7 +128,7 @@ impl Window for Gui {
         _window: WindowHandle,
     ) -> kludgine::app::Result<()> {
         let mut input = self.console.state.input.lock();
-        let mut scrollback = self.scrollback.lock();
+        let mut scrollback = self.console.state.scrollback.lock();
         let one_char = Text::prepare(
             "m",
             &self.console.state.config.font,
@@ -252,10 +207,11 @@ impl Window for Gui {
             }
         }
 
-        self.maximum_scroll = total_lines.saturating_sub(rows.saturating_sub(input_lines_count));
-        if scrollback.scroll > self.maximum_scroll {
+        scrollback.maximum_scroll =
+            total_lines.saturating_sub(rows.saturating_sub(input_lines_count));
+        if scrollback.scroll > scrollback.maximum_scroll {
             // Oops, we were scrolled too far now that we've re-rendered.
-            scrollback.scroll = self.maximum_scroll;
+            scrollback.scroll = scrollback.maximum_scroll;
             status.set_needs_redraw();
         }
 
@@ -282,53 +238,5 @@ impl Window for Gui {
 
     fn additional_scale(&self) -> Scale<f32, Scaled, Points> {
         Scale::new(self.zoom * 2.)
-    }
-}
-
-fn command_handler(
-    redrawer: RedrawRequester,
-    commands: flume::Receiver<ConsoleCommand>,
-    state: Arc<State>,
-    scrollback: Arc<Mutex<Scrollback>>,
-) {
-    while let Ok(command) = commands.recv() {
-        match command {
-            ConsoleCommand::Push(line) => {
-                let mut scrollback = scrollback.lock();
-                let mut wrapped = Wrapped::from(line);
-                if scrollback.scroll != 0 {
-                    // When the view port is scrolled, keep it at the same position
-                    wrapped.rewrap(scrollback.columns);
-                    let line_count = wrapped.lines().len();
-                    scrollback.scroll += line_count;
-                }
-                scrollback.events.push_front(wrapped);
-                redrawer.request_redraw();
-            }
-            ConsoleCommand::SetSuggestion(suggestion) => {
-                let mut input = state.input.lock();
-                input.suggestion = suggestion;
-                redrawer.request_redraw();
-            }
-            ConsoleCommand::ResetInput => {
-                let mut input = state.input.lock();
-                input.buffer.clear();
-                redrawer.request_redraw();
-            }
-            ConsoleCommand::ResetScroll => {
-                let mut scrollback = scrollback.lock();
-                scrollback.scroll = 0;
-                redrawer.request_redraw();
-            }
-            ConsoleCommand::ResetScrollback => {
-                let mut scrollback = scrollback.lock();
-                scrollback.scroll = 0;
-                scrollback.events.clear();
-                redrawer.request_redraw();
-            }
-            ConsoleCommand::Shutdown => {
-                state.shutdown();
-            }
-        }
     }
 }

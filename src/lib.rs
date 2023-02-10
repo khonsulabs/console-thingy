@@ -3,6 +3,7 @@ use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
+use crate::scrollback::Scrollback;
 use crate::wrap::Wrapped;
 
 #[cfg(feature = "gui")]
@@ -98,39 +99,33 @@ fn app_thread<T: App>(app: T, console: Console) -> anyhow::Result<()> {
 pub struct Console {
     state: Arc<State>,
     app: flume::Receiver<ConsoleEvent>,
-    console: flume::Sender<ConsoleCommand>,
 }
 
 impl Console {
     fn spawn<T: App>(app: T, state: Arc<State>) -> ConsoleHandle {
         let (app_sender, app_receiver) = flume::unbounded();
-        let (console_sender, console_receiver) = flume::unbounded();
         let thread = spawn_app(
             app,
             Self {
                 state: state.clone(),
                 app: app_receiver,
-                console: console_sender,
             },
         );
         ConsoleHandle {
             state,
             thread: Some(thread),
             events: Some(app_sender),
-            commands: console_receiver,
         }
     }
 
     pub fn push_line(&self, line: impl Into<String>) {
-        self.console
-            .send(ConsoleCommand::Push(line.into()))
-            .expect("console shut down");
+        self.state.push(line.into());
+        self.state.redraw();
     }
 
     pub fn set_suggestion(&self, suggestion: impl Into<String>) {
-        self.console
-            .send(ConsoleCommand::SetSuggestion(suggestion.into()))
-            .expect("console shut down");
+        self.state.set_suggestion(suggestion.into());
+        self.state.redraw();
     }
 
     pub fn input(&self) -> Input {
@@ -139,21 +134,18 @@ impl Console {
     }
 
     pub fn clear_input(&self) {
-        self.console
-            .send(ConsoleCommand::ResetInput)
-            .expect("console shut down");
+        self.state.clear_input();
+        self.state.redraw();
     }
 
     pub fn clear_scrollback(&self) {
-        self.console
-            .send(ConsoleCommand::ResetScrollback)
-            .expect("console shut down");
+        self.state.clear_scrollback();
+        self.state.redraw();
     }
 
     pub fn reset_scroll(&self) {
-        self.console
-            .send(ConsoleCommand::ResetScroll)
-            .expect("console shut down");
+        self.state.scroll_to_current();
+        self.state.redraw();
     }
 
     pub fn next_event(&self) -> Result<ConsoleEvent, flume::RecvError> {
@@ -167,10 +159,10 @@ impl Console {
 
 impl Drop for Console {
     fn drop(&mut self) {
-        // If this is the last reference, notify the app the console is shutting
-        // down.
+        // If this is the last reference, mark the state as being shut down.
         if Arc::strong_count(&self.state) == 1 {
-            drop(self.console.send(ConsoleCommand::Shutdown));
+            self.state.shutdown();
+            self.state.redraw();
         }
     }
 }
@@ -179,7 +171,6 @@ struct ConsoleHandle {
     state: Arc<State>,
     thread: Option<JoinHandle<anyhow::Result<()>>>,
     events: Option<flume::Sender<ConsoleEvent>>,
-    commands: flume::Receiver<ConsoleCommand>,
 }
 
 impl ConsoleHandle {
@@ -207,6 +198,59 @@ impl ConsoleHandle {
             let _ = events.send(event);
         }
     }
+
+    pub fn input(&self, ch: char) {
+        let mut input = self.state.input.lock();
+        match ch {
+            '\u{8}' => {
+                input.buffer.pop();
+                input.suggestion.clear();
+                self.send(ConsoleEvent::InputBufferChanged);
+            }
+            '\r' | '\n' => {
+                self.send(ConsoleEvent::Input);
+            }
+            '\t' => {}
+            _ => {
+                input.buffer.push(ch);
+                if input.suggestion.starts_with(ch) {
+                    input.suggestion.remove(0);
+                }
+                self.send(ConsoleEvent::InputBufferChanged);
+            }
+        }
+        self.state.redraw();
+    }
+
+    pub fn complete_suggestion(&self) -> bool {
+        let mut input = self.state.input.lock();
+        if input.suggestion.is_empty() {
+            false
+        } else {
+            let input = &mut *input;
+            input.buffer.push_str(&input.suggestion);
+            input.suggestion.clear();
+            self.state.redraw();
+            self.send(ConsoleEvent::InputBufferChanged);
+            true
+        }
+    }
+
+    pub fn scroll(&self, lines: isize) {
+        let mut scrollback = self.state.scrollback.lock();
+        if lines > 0 {
+            scrollback.scroll = scrollback
+                .scroll
+                .saturating_add(lines as usize)
+                .min(scrollback.maximum_scroll);
+        } else if lines == isize::MIN {
+            // Can't negate safely due to to being unrepresentable
+            scrollback.scroll = scrollback.scroll.saturating_sub(isize::MAX as usize + 1);
+        } else {
+            scrollback.scroll = scrollback.scroll.saturating_sub((-lines) as usize);
+        }
+        self.state.redraw();
+    }
 }
 
 pub enum ConsoleEvent {
@@ -214,19 +258,12 @@ pub enum ConsoleEvent {
     Input,
 }
 
-enum ConsoleCommand {
-    Push(String),
-    SetSuggestion(String),
-    ResetInput,
-    ResetScroll,
-    ResetScrollback,
-    Shutdown,
-}
-
 struct State {
     config: Config,
     shutdown: Mutex<bool>,
     input: Mutex<Input>,
+    scrollback: Mutex<Scrollback>,
+    redrawer: Mutex<Option<Box<dyn Redrawer>>>,
 }
 
 impl From<Config> for State {
@@ -235,6 +272,8 @@ impl From<Config> for State {
             config,
             shutdown: Mutex::new(false),
             input: Mutex::default(),
+            scrollback: Mutex::default(),
+            redrawer: Mutex::default(),
         }
     }
 }
@@ -246,6 +285,55 @@ impl State {
 
     pub fn shutdown(&self) {
         *self.shutdown.lock() = true;
+    }
+
+    pub fn set_redrawer<R>(&self, redrawer: R)
+    where
+        R: Redrawer,
+    {
+        let mut installed = self.redrawer.lock();
+        *installed = Some(Box::new(redrawer));
+    }
+
+    pub fn redraw(&self) {
+        let mut redrawer = self.redrawer.lock();
+        if let Some(redrawer) = &mut *redrawer {
+            redrawer.redraw();
+        }
+    }
+
+    pub fn push(&self, line: String) {
+        let mut scrollback = self.scrollback.lock();
+        let mut wrapped = Wrapped::from(line);
+        if scrollback.scroll != 0 {
+            // When the view port is scrolled, keep it at the same position
+            wrapped.rewrap(scrollback.columns);
+            let line_count = wrapped.lines().len();
+            scrollback.scroll += line_count;
+        }
+        scrollback.events.push_front(wrapped);
+    }
+
+    pub fn set_suggestion(&self, suggestion: String) {
+        let mut input = self.input.lock();
+        input.suggestion = suggestion;
+    }
+
+    pub fn clear_input(&self) {
+        let mut input = self.input.lock();
+        input.buffer.clear();
+        input.suggestion.clear();
+    }
+
+    pub fn clear_scrollback(&self) {
+        let mut scrollback = self.scrollback.lock();
+        scrollback.scroll = 0;
+        scrollback.events.clear();
+    }
+
+    pub fn scroll_to_current(&self) {
+        let mut scrollback = self.scrollback.lock();
+        scrollback.scroll = 0;
     }
 }
 
@@ -272,5 +360,18 @@ impl DerefMut for Input {
 impl From<Input> for String {
     fn from(input: Input) -> Self {
         input.buffer.into()
+    }
+}
+
+pub trait Redrawer: Send + Sync + 'static {
+    fn redraw(&mut self);
+}
+
+impl<T> Redrawer for T
+where
+    T: FnMut() + Send + Sync + 'static,
+{
+    fn redraw(&mut self) {
+        self()
     }
 }
