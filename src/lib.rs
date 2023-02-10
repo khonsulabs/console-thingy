@@ -165,12 +165,31 @@ impl Console {
     pub fn should_shutdown(&self) -> bool {
         self.state.should_shutdown()
     }
+
+    pub fn read_input(&self) -> Option<String> {
+        loop {
+            let ConsoleEvent::Input = self.next_event().ok()? else { continue };
+            let input = self.input();
+            self.clear_input();
+            break Some(input.into());
+        }
+    }
+
+    pub fn read_secure(&self) -> Option<String> {
+        loop {
+            self.set_secure();
+            let ConsoleEvent::Input = self.next_event().ok()? else { continue };
+            let input = self.input();
+            self.clear_secure();
+            break Some(input.into());
+        }
+    }
 }
 
 impl Drop for Console {
     fn drop(&mut self) {
         // If this is the last reference, mark the state as being shut down.
-        if Arc::strong_count(&self.state) == 1 {
+        if Arc::strong_count(&self.state) == 2 {
             self.state.shutdown();
             self.state.redraw();
         }
@@ -341,13 +360,9 @@ impl State {
 
     pub fn clear_secure(&self) {
         let mut input = self.input.lock();
+        // Input::clear will zero data if the input mode is secure.
+        input.clear();
         input.mode = InputMode::Text;
-        let len = input.buffer.len();
-        // Overwrite the input with null bytes
-        input.buffer.clear();
-        input.buffer.extend(std::iter::repeat('\0').take(len));
-        // Reset the buffer.
-        input.buffer.clear();
     }
 
     pub fn set_secure(&self) {
@@ -381,6 +396,18 @@ pub struct Input {
     mode: InputMode,
 }
 
+impl Input {
+    pub fn clear(&mut self) {
+        if matches!(self.mode, InputMode::Secure) {
+            let len = self.buffer.len();
+            // Overwrite the input with null bytes
+            self.buffer.clear();
+            self.buffer.extend(std::iter::repeat('\0').take(len));
+        }
+        self.buffer.clear();
+    }
+}
+
 impl Deref for Input {
     type Target = String;
 
@@ -396,8 +423,16 @@ impl DerefMut for Input {
 }
 
 impl From<Input> for String {
-    fn from(input: Input) -> Self {
-        input.buffer.into()
+    fn from(mut input: Input) -> Self {
+        std::mem::take(&mut input.buffer).into()
+    }
+}
+
+impl Drop for Input {
+    fn drop(&mut self) {
+        if matches!(self.mode, InputMode::Secure) {
+            self.clear();
+        }
     }
 }
 
