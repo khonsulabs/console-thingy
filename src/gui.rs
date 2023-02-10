@@ -1,7 +1,10 @@
+use std::ops::{Deref, DerefMut};
+
 use kludgine::core::figures::Points;
 use kludgine::prelude::*;
 
-use crate::ConsoleHandle;
+use crate::wrap::Wrapped;
+use crate::{ConsoleHandle, InputMode};
 
 #[cfg(feature = "bundled-font")]
 pub fn bundled_font() -> &'static Font {
@@ -128,6 +131,7 @@ impl Window for Gui {
         _window: WindowHandle,
     ) -> kludgine::app::Result<()> {
         let mut input = self.console.state.input.lock();
+        let input = &mut *input;
         let mut scrollback = self.console.state.scrollback.lock();
         let one_char = Text::prepare(
             "m",
@@ -144,8 +148,16 @@ impl Window for Gui {
         let line_height = ascent - descent;
         let rows = (scene.size().height() / line_height).get() as usize;
 
-        input.buffer.rewrap(cols);
-        let input_lines = input.buffer.lines();
+        let mut input_source = match &mut input.mode {
+            InputMode::Text | InputMode::Suggesting(_) => {
+                WrappedSource::Borrowed(&mut input.buffer)
+            }
+            InputMode::Secure => {
+                WrappedSource::Owned(Wrapped::from("*".repeat(input.buffer.len())))
+            }
+        };
+        input_source.rewrap(cols);
+        let input_lines = input_source.lines();
         let input_lines_count = input_lines.len();
 
         let input_top = scene.size().height() + descent - line_height * input_lines_count as f32;
@@ -167,18 +179,20 @@ impl Window for Gui {
             );
             prepared.render_baseline_at(scene, Point::from_figures(Figure::new(0.), baseline))?;
 
-            if line_number == input_lines_count - 1 && !input.suggestion.is_empty() {
-                let suggestion = Text::prepare(
-                    &input.suggestion,
-                    &self.console.state.config.font,
-                    Figure::new(14.0),
-                    Color::GRAY,
-                    scene,
-                );
-                suggestion.render_baseline_at(
-                    scene,
-                    Point::from_figures(prepared.width.to_scaled(scene.scale()), baseline),
-                )?;
+            if line_number == input_lines_count - 1 {
+                if let InputMode::Suggesting(suggestion) = &input.mode {
+                    let suggestion = Text::prepare(
+                        suggestion,
+                        &self.console.state.config.font,
+                        Figure::new(14.0),
+                        Color::GRAY,
+                        scene,
+                    );
+                    suggestion.render_baseline_at(
+                        scene,
+                        Point::from_figures(prepared.width.to_scaled(scene.scale()), baseline),
+                    )?;
+                }
             }
             baseline += line_height;
         }
@@ -238,5 +252,30 @@ impl Window for Gui {
 
     fn additional_scale(&self) -> Scale<f32, Scaled, Points> {
         Scale::new(self.zoom * 2.)
+    }
+}
+
+enum WrappedSource<'a> {
+    Borrowed(&'a mut Wrapped),
+    Owned(Wrapped),
+}
+
+impl<'a> Deref for WrappedSource<'a> {
+    type Target = Wrapped;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            WrappedSource::Borrowed(wrapped) => wrapped,
+            WrappedSource::Owned(wrapped) => wrapped,
+        }
+    }
+}
+
+impl<'a> DerefMut for WrappedSource<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            WrappedSource::Borrowed(wrapped) => wrapped,
+            WrappedSource::Owned(wrapped) => wrapped,
+        }
     }
 }

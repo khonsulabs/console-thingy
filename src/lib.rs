@@ -128,6 +128,16 @@ impl Console {
         self.state.redraw();
     }
 
+    pub fn clear_secure(&self) {
+        self.state.clear_secure();
+        self.state.redraw();
+    }
+
+    pub fn set_secure(&self) {
+        self.state.set_secure();
+        self.state.redraw();
+    }
+
     pub fn input(&self) -> Input {
         let input = self.state.input.lock();
         input.clone()
@@ -204,7 +214,10 @@ impl ConsoleHandle {
         match ch {
             '\u{8}' => {
                 input.buffer.pop();
-                input.suggestion.clear();
+                if let InputMode::Suggesting(suggestion) = &mut input.mode {
+                    suggestion.clear();
+                }
+
                 self.send(ConsoleEvent::InputBufferChanged);
             }
             '\r' | '\n' => {
@@ -213,8 +226,10 @@ impl ConsoleHandle {
             '\t' => {}
             _ => {
                 input.buffer.push(ch);
-                if input.suggestion.starts_with(ch) {
-                    input.suggestion.remove(0);
+                if let InputMode::Suggesting(suggestion) = &mut input.mode {
+                    if suggestion.starts_with(ch) {
+                        suggestion.remove(0);
+                    }
                 }
                 self.send(ConsoleEvent::InputBufferChanged);
             }
@@ -224,15 +239,20 @@ impl ConsoleHandle {
 
     pub fn complete_suggestion(&self) -> bool {
         let mut input = self.state.input.lock();
-        if input.suggestion.is_empty() {
-            false
+        let input = &mut *input;
+
+        if let InputMode::Suggesting(suggestion) = &mut input.mode {
+            if suggestion.is_empty() {
+                false
+            } else {
+                input.buffer.push_str(suggestion);
+                suggestion.clear();
+                self.state.redraw();
+                self.send(ConsoleEvent::InputBufferChanged);
+                true
+            }
         } else {
-            let input = &mut *input;
-            input.buffer.push_str(&input.suggestion);
-            input.suggestion.clear();
-            self.state.redraw();
-            self.send(ConsoleEvent::InputBufferChanged);
-            true
+            false
         }
     }
 
@@ -316,13 +336,31 @@ impl State {
 
     pub fn set_suggestion(&self, suggestion: String) {
         let mut input = self.input.lock();
-        input.suggestion = suggestion;
+        input.mode = InputMode::Suggesting(suggestion);
+    }
+
+    pub fn clear_secure(&self) {
+        let mut input = self.input.lock();
+        input.mode = InputMode::Text;
+        let len = input.buffer.len();
+        // Overwrite the input with null bytes
+        input.buffer.clear();
+        input.buffer.extend(std::iter::repeat('\0').take(len));
+        // Reset the buffer.
+        input.buffer.clear();
+    }
+
+    pub fn set_secure(&self) {
+        let mut input = self.input.lock();
+        input.mode = InputMode::Secure;
     }
 
     pub fn clear_input(&self) {
         let mut input = self.input.lock();
         input.buffer.clear();
-        input.suggestion.clear();
+        if let InputMode::Suggesting(_) = &input.mode {
+            input.mode = InputMode::Text;
+        }
     }
 
     pub fn clear_scrollback(&self) {
@@ -340,7 +378,7 @@ impl State {
 #[derive(Default, Clone)]
 pub struct Input {
     buffer: Wrapped,
-    suggestion: String,
+    mode: InputMode,
 }
 
 impl Deref for Input {
@@ -374,4 +412,12 @@ where
     fn redraw(&mut self) {
         self()
     }
+}
+
+#[derive(Default, Clone)]
+pub enum InputMode {
+    #[default]
+    Text,
+    Suggesting(String),
+    Secure,
 }
