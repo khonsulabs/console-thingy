@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":[["ConsoleEvent",""]],"struct":[["Config",""],["Console",""],["Input",""]],"trait":[["App",""]]};
+window.SIDEBAR_ITEMS = {"enum":[["ConsoleEvent",""],["InputMode",""]],"struct":[["Config",""],["Console",""],["Input",""]],"trait":[["App",""],["Redrawer",""]]};

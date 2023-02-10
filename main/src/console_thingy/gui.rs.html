@@ -279,68 +279,13 @@
 <a href="#279" id="279">279</a>
 <a href="#280" id="280">280</a>
 <a href="#281" id="281">281</a>
-<a href="#282" id="282">282</a>
-<a href="#283" id="283">283</a>
-<a href="#284" id="284">284</a>
-<a href="#285" id="285">285</a>
-<a href="#286" id="286">286</a>
-<a href="#287" id="287">287</a>
-<a href="#288" id="288">288</a>
-<a href="#289" id="289">289</a>
-<a href="#290" id="290">290</a>
-<a href="#291" id="291">291</a>
-<a href="#292" id="292">292</a>
-<a href="#293" id="293">293</a>
-<a href="#294" id="294">294</a>
-<a href="#295" id="295">295</a>
-<a href="#296" id="296">296</a>
-<a href="#297" id="297">297</a>
-<a href="#298" id="298">298</a>
-<a href="#299" id="299">299</a>
-<a href="#300" id="300">300</a>
-<a href="#301" id="301">301</a>
-<a href="#302" id="302">302</a>
-<a href="#303" id="303">303</a>
-<a href="#304" id="304">304</a>
-<a href="#305" id="305">305</a>
-<a href="#306" id="306">306</a>
-<a href="#307" id="307">307</a>
-<a href="#308" id="308">308</a>
-<a href="#309" id="309">309</a>
-<a href="#310" id="310">310</a>
-<a href="#311" id="311">311</a>
-<a href="#312" id="312">312</a>
-<a href="#313" id="313">313</a>
-<a href="#314" id="314">314</a>
-<a href="#315" id="315">315</a>
-<a href="#316" id="316">316</a>
-<a href="#317" id="317">317</a>
-<a href="#318" id="318">318</a>
-<a href="#319" id="319">319</a>
-<a href="#320" id="320">320</a>
-<a href="#321" id="321">321</a>
-<a href="#322" id="322">322</a>
-<a href="#323" id="323">323</a>
-<a href="#324" id="324">324</a>
-<a href="#325" id="325">325</a>
-<a href="#326" id="326">326</a>
-<a href="#327" id="327">327</a>
-<a href="#328" id="328">328</a>
-<a href="#329" id="329">329</a>
-<a href="#330" id="330">330</a>
-<a href="#331" id="331">331</a>
-<a href="#332" id="332">332</a>
-<a href="#333" id="333">333</a>
-<a href="#334" id="334">334</a>
-</pre><pre class="rust"><code><span class="kw">use </span>std::sync::Arc;
+</pre><pre class="rust"><code><span class="kw">use </span>std::ops::{Deref, DerefMut};
 
 <span class="kw">use </span>kludgine::core::figures::Points;
 <span class="kw">use </span>kludgine::prelude::<span class="kw-2">*</span>;
-<span class="kw">use </span>parking_lot::Mutex;
 
-<span class="kw">use </span><span class="kw">crate</span>::scrollback::Scrollback;
 <span class="kw">use </span><span class="kw">crate</span>::wrap::Wrapped;
-<span class="kw">use crate</span>::{ConsoleCommand, ConsoleEvent, ConsoleHandle, State};
+<span class="kw">use crate</span>::{ConsoleHandle, InputMode};
 
 <span class="attr">#[cfg(feature = <span class="string">&quot;bundled-font&quot;</span>)]
 </span><span class="kw">pub fn </span>bundled_font() -&gt; <span class="kw-2">&amp;</span><span class="lifetime">&#39;static </span>Font {
@@ -351,21 +296,16 @@
 }
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>run(console: ConsoleHandle) -&gt; ! {
-    <span class="kw">let </span>scrollback = Arc::new(Mutex::new(Scrollback::default()));
     SingleWindowApplication::run(Gui {
         zoom: <span class="number">1.0</span>,
-        scrollback,
         console,
         line_height: Figure::new(<span class="number">0.</span>),
-        maximum_scroll: <span class="number">0</span>,
     })
 }
 
 <span class="kw">pub struct </span>Gui {
     zoom: f32,
-    scrollback: Arc&lt;Mutex&lt;Scrollback&gt;&gt;,
     console: ConsoleHandle,
-    maximum_scroll: usize,
     line_height: Figure&lt;f32, Scaled&gt;,
 }
 
@@ -385,10 +325,10 @@
     <span class="kw">where
         </span><span class="self">Self</span>: Sized,
     {
-        <span class="kw">let </span>commands = <span class="self">self</span>.console.commands.clone();
-        <span class="kw">let </span>scrollback = <span class="self">self</span>.scrollback.clone();
-        <span class="kw">let </span>state = <span class="self">self</span>.console.state.clone();
-        std::thread::spawn(<span class="kw">move </span>|| command_handler(redrawer, commands, state, scrollback));
+        <span class="self">self</span>.console
+            .state
+            .set_redrawer(<span class="kw">move </span>|| redrawer.request_redraw());
+
         <span class="prelude-val">Ok</span>(())
     }
 
@@ -427,19 +367,11 @@
                     status.set_needs_redraw();
                 }
                 VirtualKeyCode::Tab | VirtualKeyCode::Right =&gt; {
-                    <span class="kw">let </span><span class="kw-2">mut </span>input = <span class="self">self</span>.console.state.input.lock();
-                    <span class="kw">if </span>!input.suggestion.is_empty() {
-                        <span class="kw">let </span>input = <span class="kw-2">&amp;mut *</span>input;
-                        input.buffer.push_str(<span class="kw-2">&amp;</span>input.suggestion);
-                        input.suggestion.clear();
-                        status.set_needs_redraw();
-                        <span class="self">self</span>.console.send(ConsoleEvent::InputBufferChanged);
-                    }
+                    <span class="self">self</span>.console.complete_suggestion();
                 }
                 <span class="kw">_ </span>=&gt; {}
             },
             Event::MouseWheel { delta, .. } =&gt; {
-                <span class="kw">let </span><span class="kw-2">mut </span>scrollback = <span class="self">self</span>.scrollback.lock();
                 <span class="kw">let </span>lines = <span class="kw">match </span>delta {
                     MouseScrollDelta::LineDelta(<span class="kw">_</span>, y) =&gt; y,
                     MouseScrollDelta::PixelDelta(pixels) =&gt; {
@@ -447,15 +379,7 @@
                         pixels.y <span class="kw">as </span>f32 / line_height.get()
                     }
                 };
-                <span class="kw">if </span>lines &gt; <span class="number">0. </span>{
-                    scrollback.scroll = scrollback
-                        .scroll
-                        .saturating_add(lines <span class="kw">as </span>usize)
-                        .min(<span class="self">self</span>.maximum_scroll);
-                } <span class="kw">else </span>{
-                    scrollback.scroll = scrollback.scroll.saturating_sub((-lines) <span class="kw">as </span>usize);
-                }
-                status.set_needs_redraw();
+                <span class="self">self</span>.console.scroll(lines <span class="kw">as </span>isize);
             }
             <span class="kw">_ </span>=&gt; {}
         }
@@ -466,7 +390,7 @@
     <span class="kw">fn </span>receive_character(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         ch: char,
-        status: <span class="kw-2">&amp;mut </span>RedrawStatus,
+        _status: <span class="kw-2">&amp;mut </span>RedrawStatus,
         scene: <span class="kw-2">&amp;</span>Target,
         _window: WindowHandle,
     ) -&gt; kludgine::app::Result&lt;()&gt;
@@ -476,26 +400,7 @@
         <span class="kw">if </span>scene.modifiers_pressed().primary_modifier() {
             <span class="comment">// This is a shortcut of some sort.
         </span>} <span class="kw">else </span>{
-            <span class="kw">let </span><span class="kw-2">mut </span>input = <span class="self">self</span>.console.state.input.lock();
-            <span class="kw">match </span>ch {
-                <span class="string">&#39;\u{8}&#39; </span>=&gt; {
-                    input.buffer.pop();
-                    input.suggestion.clear();
-                    <span class="self">self</span>.console.send(ConsoleEvent::InputBufferChanged);
-                }
-                <span class="string">&#39;\r&#39; </span>| <span class="string">&#39;\n&#39; </span>=&gt; {
-                    <span class="self">self</span>.console.send(ConsoleEvent::Input);
-                }
-                <span class="string">&#39;\t&#39; </span>=&gt; {}
-                <span class="kw">_ </span>=&gt; {
-                    input.buffer.push(ch);
-                    <span class="kw">if </span>input.suggestion.starts_with(ch) {
-                        input.suggestion.remove(<span class="number">0</span>);
-                    }
-                    <span class="self">self</span>.console.send(ConsoleEvent::InputBufferChanged);
-                }
-            }
-            status.set_needs_redraw();
+            <span class="self">self</span>.console.input(ch);
         }
         <span class="prelude-val">Ok</span>(())
     }
@@ -507,7 +412,8 @@
         _window: WindowHandle,
     ) -&gt; kludgine::app::Result&lt;()&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>input = <span class="self">self</span>.console.state.input.lock();
-        <span class="kw">let </span><span class="kw-2">mut </span>scrollback = <span class="self">self</span>.scrollback.lock();
+        <span class="kw">let </span>input = <span class="kw-2">&amp;mut *</span>input;
+        <span class="kw">let </span><span class="kw-2">mut </span>scrollback = <span class="self">self</span>.console.state.scrollback.lock();
         <span class="kw">let </span>one_char = Text::prepare(
             <span class="string">&quot;m&quot;</span>,
             <span class="kw-2">&amp;</span><span class="self">self</span>.console.state.config.font,
@@ -523,8 +429,16 @@
         <span class="kw">let </span>line_height = ascent - descent;
         <span class="kw">let </span>rows = (scene.size().height() / line_height).get() <span class="kw">as </span>usize;
 
-        input.buffer.rewrap(cols);
-        <span class="kw">let </span>input_lines = input.buffer.lines();
+        <span class="kw">let </span><span class="kw-2">mut </span>input_source = <span class="kw">match </span><span class="kw-2">&amp;mut </span>input.mode {
+            InputMode::Text | InputMode::Suggesting(<span class="kw">_</span>) =&gt; {
+                WrappedSource::Borrowed(<span class="kw-2">&amp;mut </span>input.buffer)
+            }
+            InputMode::Secure =&gt; {
+                WrappedSource::Owned(Wrapped::from(<span class="string">&quot;*&quot;</span>.repeat(input.buffer.len())))
+            }
+        };
+        input_source.rewrap(cols);
+        <span class="kw">let </span>input_lines = input_source.lines();
         <span class="kw">let </span>input_lines_count = input_lines.len();
 
         <span class="kw">let </span>input_top = scene.size().height() + descent - line_height * input_lines_count <span class="kw">as </span>f32;
@@ -546,18 +460,20 @@
             );
             prepared.render_baseline_at(scene, Point::from_figures(Figure::new(<span class="number">0.</span>), baseline))<span class="question-mark">?</span>;
 
-            <span class="kw">if </span>line_number == input_lines_count - <span class="number">1 </span>&amp;&amp; !input.suggestion.is_empty() {
-                <span class="kw">let </span>suggestion = Text::prepare(
-                    <span class="kw-2">&amp;</span>input.suggestion,
-                    <span class="kw-2">&amp;</span><span class="self">self</span>.console.state.config.font,
-                    Figure::new(<span class="number">14.0</span>),
-                    Color::GRAY,
-                    scene,
-                );
-                suggestion.render_baseline_at(
-                    scene,
-                    Point::from_figures(prepared.width.to_scaled(scene.scale()), baseline),
-                )<span class="question-mark">?</span>;
+            <span class="kw">if </span>line_number == input_lines_count - <span class="number">1 </span>{
+                <span class="kw">if let </span>InputMode::Suggesting(suggestion) = <span class="kw-2">&amp;</span>input.mode {
+                    <span class="kw">let </span>suggestion = Text::prepare(
+                        suggestion,
+                        <span class="kw-2">&amp;</span><span class="self">self</span>.console.state.config.font,
+                        Figure::new(<span class="number">14.0</span>),
+                        Color::GRAY,
+                        scene,
+                    );
+                    suggestion.render_baseline_at(
+                        scene,
+                        Point::from_figures(prepared.width.to_scaled(scene.scale()), baseline),
+                    )<span class="question-mark">?</span>;
+                }
             }
             baseline += line_height;
         }
@@ -586,10 +502,11 @@
             }
         }
 
-        <span class="self">self</span>.maximum_scroll = total_lines.saturating_sub(rows.saturating_sub(input_lines_count));
-        <span class="kw">if </span>scrollback.scroll &gt; <span class="self">self</span>.maximum_scroll {
+        scrollback.maximum_scroll =
+            total_lines.saturating_sub(rows.saturating_sub(input_lines_count));
+        <span class="kw">if </span>scrollback.scroll &gt; scrollback.maximum_scroll {
             <span class="comment">// Oops, we were scrolled too far now that we&#39;ve re-rendered.
-            </span>scrollback.scroll = <span class="self">self</span>.maximum_scroll;
+            </span>scrollback.scroll = scrollback.maximum_scroll;
             status.set_needs_redraw();
         }
 
@@ -619,50 +536,27 @@
     }
 }
 
-<span class="kw">fn </span>command_handler(
-    redrawer: RedrawRequester,
-    commands: flume::Receiver&lt;ConsoleCommand&gt;,
-    state: Arc&lt;State&gt;,
-    scrollback: Arc&lt;Mutex&lt;Scrollback&gt;&gt;,
-) {
-    <span class="kw">while let </span><span class="prelude-val">Ok</span>(command) = commands.recv() {
-        <span class="kw">match </span>command {
-            ConsoleCommand::Push(line) =&gt; {
-                <span class="kw">let </span><span class="kw-2">mut </span>scrollback = scrollback.lock();
-                <span class="kw">let </span><span class="kw-2">mut </span>wrapped = Wrapped::from(line);
-                <span class="kw">if </span>scrollback.scroll != <span class="number">0 </span>{
-                    <span class="comment">// When the view port is scrolled, keep it at the same position
-                    </span>wrapped.rewrap(scrollback.columns);
-                    <span class="kw">let </span>line_count = wrapped.lines().len();
-                    scrollback.scroll += line_count;
-                }
-                scrollback.events.push_front(wrapped);
-                redrawer.request_redraw();
-            }
-            ConsoleCommand::SetSuggestion(suggestion) =&gt; {
-                <span class="kw">let </span><span class="kw-2">mut </span>input = state.input.lock();
-                input.suggestion = suggestion;
-                redrawer.request_redraw();
-            }
-            ConsoleCommand::ResetInput =&gt; {
-                <span class="kw">let </span><span class="kw-2">mut </span>input = state.input.lock();
-                input.buffer.clear();
-                redrawer.request_redraw();
-            }
-            ConsoleCommand::ResetScroll =&gt; {
-                <span class="kw">let </span><span class="kw-2">mut </span>scrollback = scrollback.lock();
-                scrollback.scroll = <span class="number">0</span>;
-                redrawer.request_redraw();
-            }
-            ConsoleCommand::ResetScrollback =&gt; {
-                <span class="kw">let </span><span class="kw-2">mut </span>scrollback = scrollback.lock();
-                scrollback.scroll = <span class="number">0</span>;
-                scrollback.events.clear();
-                redrawer.request_redraw();
-            }
-            ConsoleCommand::Shutdown =&gt; {
-                state.shutdown();
-            }
+<span class="kw">enum </span>WrappedSource&lt;<span class="lifetime">&#39;a</span>&gt; {
+    Borrowed(<span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span><span class="kw-2">mut </span>Wrapped),
+    Owned(Wrapped),
+}
+
+<span class="kw">impl</span>&lt;<span class="lifetime">&#39;a</span>&gt; Deref <span class="kw">for </span>WrappedSource&lt;<span class="lifetime">&#39;a</span>&gt; {
+    <span class="kw">type </span>Target = Wrapped;
+
+    <span class="kw">fn </span>deref(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="self">Self</span>::Target {
+        <span class="kw">match </span><span class="self">self </span>{
+            WrappedSource::Borrowed(wrapped) =&gt; wrapped,
+            WrappedSource::Owned(wrapped) =&gt; wrapped,
+        }
+    }
+}
+
+<span class="kw">impl</span>&lt;<span class="lifetime">&#39;a</span>&gt; DerefMut <span class="kw">for </span>WrappedSource&lt;<span class="lifetime">&#39;a</span>&gt; {
+    <span class="kw">fn </span>deref_mut(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;mut </span><span class="self">Self</span>::Target {
+        <span class="kw">match </span><span class="self">self </span>{
+            WrappedSource::Borrowed(wrapped) =&gt; wrapped,
+            WrappedSource::Owned(wrapped) =&gt; wrapped,
         }
     }
 }
